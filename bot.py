@@ -175,6 +175,29 @@ async def cb_set(cb: types.CallbackQuery):
     kb.add(InlineKeyboardButton(text="🔄 Проверить статус", callback_data=f"check_st:{sid}"))
     await cb.message.edit_text(f"✅ Спасибо! Отметили:\n\n⛽ <b>{st[1]}</b>\n🛢 {fuel}: {STATUSES[status]}", parse_mode="HTML", reply_markup=kb)
     await cb.answer("Записано!")
+    @dp.message_handler(commands=["del_station"])
+async def cmd_del_station(m: types.Message):
+    if m.from_user.id not in ADMIN_IDS:
+        return
+    args = m.text.split(" ", 1)
+    if len(args) < 2 or args[1].count("|") != 1:
+        await m.answer("Формат: /del_station Город | Название")
+        return
+    city, name = [x.strip() for x in args[1].split("|")]
+    conn = sqlite3.connect(DB); cur = conn.cursor()
+    cur.execute("SELECT id FROM stations WHERE city=? AND name=?", (city, name))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        await m.answer("❌ Не найдено: " + city + " / " + name)
+        return
+    sid = row[0]
+    cur.execute("DELETE FROM stations WHERE id=?", (sid,))
+    cur.execute("DELETE FROM reports WHERE station_id=?", (sid,))
+    conn.commit(); conn.close()
+    await m.answer("🗑 Удалено: " + city + " / " + name)
+
+
 @dp.message_handler(commands=["add_station"])
 async def cmd_add_station(m: types.Message):
     if m.from_user.id not in ADMIN_IDS:
