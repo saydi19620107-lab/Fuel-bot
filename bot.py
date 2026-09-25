@@ -175,7 +175,7 @@ async def cb_set(cb: types.CallbackQuery):
     kb.add(InlineKeyboardButton(text="🔄 Проверить статус", callback_data=f"check_st:{sid}"))
     await cb.message.edit_text(f"✅ Спасибо! Отметили:\n\n⛽ <b>{st[1]}</b>\n🛢 {fuel}: {STATUSES[status]}", parse_mode="HTML", reply_markup=kb)
     await cb.answer("Записано!")
-    @dp.message_handler(commands=["del_station"])
+@dp.message_handler(commands=["del_station"])
 async def cmd_del_station(m: types.Message):
     if m.from_user.id not in ADMIN_IDS:
         return
@@ -211,6 +211,7 @@ async def cmd_add_station(m: types.Message):
     cur.execute("INSERT INTO stations (name, city, address) VALUES (?, ?, ?)", (name, city, address))
     conn.commit(); conn.close()
     await m.answer("✅ Добавлено: " + city + " / " + name)
+
 
 if __name__ == "__main__":
     init_db()
