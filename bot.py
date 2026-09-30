@@ -8,6 +8,7 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils import executor
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -38,8 +39,17 @@ def init_db():
     cur = conn.cursor()
     cur.execute("CREATE TABLE IF NOT EXISTS stations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, city TEXT NOT NULL, address TEXT)")
     cur.execute("CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, station_id INTEGER NOT NULL, fuel_type TEXT NOT NULL, status TEXT NOT NULL, user_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     conn.commit()
     conn.close()
+
+
+def save_user(uid, username=None):
+    if not uid or uid == 0:
+        return
+    conn = sqlite3.connect(DB); cur = conn.cursor()
+    cur.execute("INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)", (uid, username))
+    conn.commit(); conn.close()
 
 
 def get_cities():
@@ -86,6 +96,16 @@ def format_time_ago(ts):
     h = m // 60
     if h < 24: return f"{h} ч назад"
     return f"{h // 24} дн назад"
+
+
+class UserSaverMiddleware(BaseMiddleware):
+    async def on_pre_process_message(self, msg: types.Message, data: dict):
+        if msg.from_user and not msg.from_user.is_bot:
+            save_user(msg.from_user.id, msg.from_user.username)
+
+    async def on_pre_process_callback_query(self, cb: types.CallbackQuery, data: dict):
+        if cb.from_user and not cb.from_user.is_bot:
+            save_user(cb.from_user.id, cb.from_user.username)
 
 
 def main_menu():
@@ -145,6 +165,36 @@ async def check_fuel(m: types.Message):
 @dp.message_handler(lambda m: m.text == "📍 Сообщить о наличии")
 async def report_start(m: types.Message):
     await m.answer("Выберите город:", reply_markup=cities_kb("rep_city"))
+
+
+@dp.message_handler(commands=["stats"])
+async def cmd_stats(m: types.Message):
+    if m.from_user.id not in ADMIN_IDS:
+        return
+    conn = sqlite3.connect(DB); cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM users WHERE first_seen > datetime('now', '-1 day')")
+    today = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM users WHERE first_seen > datetime('now', '-7 days')")
+    week = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM stations")
+    stations = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM reports")
+    reports_total = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM reports WHERE created_at > datetime('now', '-1 day')")
+    reports_today = cur.fetchone()[0]
+    conn.close()
+    await m.answer(
+        f"📊 <b>Статистика Бензин Якутии</b>\n\n"
+        f"👥 Всего пользователей: <b>{total_users}</b>\n"
+        f"🆕 За сегодня: <b>{today}</b>\n"
+        f"📅 За 7 дней: <b>{week}</b>\n\n"
+        f"📍 АЗС в базе: <b>{stations}</b>\n"
+        f"📝 Отчётов всего: <b>{reports_total}</b>\n"
+        f"✅ За 24 часа: <b>{reports_today}</b>",
+        parse_mode="HTML"
+    )
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("check_city:"))
@@ -303,6 +353,8 @@ async def api_report(request):
         if fuel not in FUEL_TYPES:
             raise ValueError("invalid fuel")
         add_report(sid, fuel, status, uid)
+        if uid:
+            save_user(uid)
         return web.json_response({"ok": True}, headers=CORS)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400, headers=CORS)
@@ -408,5 +460,6 @@ def load_stations():
 if __name__ == "__main__":
     init_db()
     load_stations()
+    dp.middleware.setup(UserSaverMiddleware())
     print("Бот запущен")
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
