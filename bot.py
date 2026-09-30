@@ -23,8 +23,14 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 DB = "fuel.db"
-FUEL_TYPES = ["АИ-92", "АИ-95", "АИ-98", "ДТ"]
-STATUSES = {"yes": "🟢 Есть", "low": "🟡 Мало", "no": "🔴 Нет"}
+FUEL_TYPES = ["АИ-92", "АИ-95", "АИ-98", "ДТ", "Пропан", "Метан"]
+STATUSES = {
+    "yes": "🟢 Есть",
+    "limit": "🟡 Лимит",
+    "card": "🟣 По картам",
+    "app": "🔵 Через приложение",
+    "no": "🔴 Нет"
+}
 
 
 def init_db():
@@ -111,7 +117,9 @@ def fuels_kb(sid, prefix):
 def statuses_kb(sid, fuel):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton(text="🟢 Есть", callback_data=f"set:{sid}:{fuel}:yes"))
-    kb.add(InlineKeyboardButton(text="🟡 Мало", callback_data=f"set:{sid}:{fuel}:low"))
+    kb.add(InlineKeyboardButton(text="🟡 Лимит", callback_data=f"set:{sid}:{fuel}:limit"))
+    kb.add(InlineKeyboardButton(text="🟣 Только по картам", callback_data=f"set:{sid}:{fuel}:card"))
+    kb.add(InlineKeyboardButton(text="🔵 Через приложение", callback_data=f"set:{sid}:{fuel}:app"))
     kb.add(InlineKeyboardButton(text="🔴 Нет", callback_data=f"set:{sid}:{fuel}:no"))
     return kb
 
@@ -156,8 +164,11 @@ async def cb_check_st(cb: types.CallbackQuery):
     lines = [f"⛽ <b>{name}</b>", f"📍 {city}, {addr}", ""]
     for f in FUEL_TYPES:
         r = s.get(f)
-        if r: lines.append(f"{f}: {STATUSES.get(r[0], r[0])} <i>({format_time_ago(r[1])})</i>")
-        else: lines.append(f"{f}: ⚪ Нет данных")
+        if r:
+            status_text = STATUSES.get(r[0], r[0])
+            lines.append(f"{f}: {status_text} <i>({format_time_ago(r[1])})</i>")
+        else:
+            lines.append(f"{f}: ⚪ Нет данных")
     lines.append("\n⚠️ Данные от пользователей, актуальны 3 часа.")
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton(text="🔄 Обновить", callback_data=f"check_st:{sid}"))
@@ -196,9 +207,10 @@ async def cb_set(cb: types.CallbackQuery):
     _, sid, fuel, status = cb.data.split(":"); sid = int(sid)
     add_report(sid, fuel, status, cb.from_user.id)
     st = get_station(sid)
+    status_text = STATUSES.get(status, status)
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton(text="🔄 Проверить статус", callback_data=f"check_st:{sid}"))
-    await cb.message.edit_text(f"✅ Спасибо! Отметили:\n\n⛽ <b>{st[1]}</b>\n🛢 {fuel}: {STATUSES[status]}", parse_mode="HTML", reply_markup=kb)
+    await cb.message.edit_text(f"✅ Спасибо! Отметили:\n\n⛽ <b>{st[1]}</b>\n🛢 {fuel}: {status_text}", parse_mode="HTML", reply_markup=kb)
     await cb.answer("Записано!")
 
 
@@ -286,8 +298,10 @@ async def api_report(request):
         fuel = data["fuel"]
         status = data["status"]
         uid = int(data.get("user_id", 0))
-        if status not in ("yes", "low", "no"):
-            raise ValueError
+        if status not in ("yes", "limit", "card", "app", "no"):
+            raise ValueError("invalid status")
+        if fuel not in FUEL_TYPES:
+            raise ValueError("invalid fuel")
         add_report(sid, fuel, status, uid)
         return web.json_response({"ok": True}, headers=CORS)
     except Exception as e:
